@@ -23,7 +23,7 @@ import io.moquette.spi.security.ISslContextCreator;
 import io.moquette.server.ServerAcceptor;
 import io.moquette.server.config.IConfig;
 import io.moquette.server.netty.metrics.*;
-import io.moquette.spi.impl.ProtocolProcessor;
+import io.moquette.spi.impl.ProtocolProcessorBase;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.*;
@@ -91,7 +91,7 @@ public class NettyAcceptor implements ServerAcceptor {
     MessageMetricsCollector m_metricsCollector = new MessageMetricsCollector();
 
     @Override
-    public void initialize(ProtocolProcessor processor, IConfig props, ISslContextCreator sslCtxCreator) throws IOException {
+    public void initialize(ProtocolProcessorBase processor, IConfig props, ISslContextCreator sslCtxCreator) throws IOException {
         m_bossGroup = new NioEventLoopGroup();
         m_workerGroup = new NioEventLoopGroup();
         final NettyMQTTHandler handler = new NettyMQTTHandler(processor);

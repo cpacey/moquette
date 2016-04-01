@@ -64,7 +64,7 @@ import org.slf4j.LoggerFactory;
  *
  * @author andrea
  */
-public class ProtocolProcessor {
+public class ProtocolProcessor implements ProtocolProcessorBase {
 
     static final class WillMessage {
         private final String topic;
@@ -139,6 +139,7 @@ public class ProtocolProcessor {
         m_sessionsStore = sessionsStore;
     }
 
+    @Override
     public void processConnect(Channel channel, ConnectMessage msg) {
         LOG.debug("CONNECT for client <{}>", msg.getClientID());
         if (msg.getProtocolVersion() != VERSION_3_1 && msg.getProtocolVersion() != VERSION_3_1_1) {
@@ -291,6 +292,7 @@ public class ProtocolProcessor {
         }
     }
 
+    @Override
     public void processPubAck(Channel channel, PubAckMessage msg) {
         String clientID = NettyUtils.clientID(channel);
         int messageID = msg.getMessageID();
@@ -326,6 +328,7 @@ public class ProtocolProcessor {
         return pub;
     }
 
+    @Override
     public void processPublish(Channel channel, PublishMessage msg) {
         LOG.trace("PUB --PUBLISH--> SRV executePublish invoked with {}", msg);
         String clientID = NettyUtils.clientID(channel);
@@ -557,6 +560,7 @@ public class ProtocolProcessor {
      * Second phase of a publish QoS2 protocol, sent by publisher to the broker. Search the stored message and publish
      * to all interested subscribers.
      * */
+    @Override
     public void processPubRel(Channel channel, PubRelMessage msg) {
         String clientID = NettyUtils.clientID(channel);
         int messageID = msg.getMessageID();
@@ -586,6 +590,7 @@ public class ProtocolProcessor {
         m_clientIDs.get(clientID).channel.writeAndFlush(pubCompMessage);
     }
 
+    @Override
     public void processPubRec(Channel channel, PubRecMessage msg) {
         String clientID = NettyUtils.clientID(channel);
         int messageID = msg.getMessageID();
@@ -603,6 +608,7 @@ public class ProtocolProcessor {
         channel.writeAndFlush(pubRelMessage);
     }
 
+    @Override
     public void processPubComp(Channel channel, PubCompMessage msg) {
         String clientID = NettyUtils.clientID(channel);
         int messageID = msg.getMessageID();
@@ -618,6 +624,7 @@ public class ProtocolProcessor {
         m_interceptor.notifyMessageAcknowledged( new InterceptAcknowledgedMessage(inflightMsg, topic, username) );
     }
 
+    @Override
     public void processDisconnect(Channel channel) throws InterruptedException {
         channel.flush();
         String clientID = NettyUtils.clientID(channel);
@@ -637,6 +644,7 @@ public class ProtocolProcessor {
         LOG.info("DISCONNECT client <{}> finished", clientID, cleanSession);
     }
 
+    @Override
     public void processConnectionLost(String clientID, boolean sessionStolen, Channel channel) {
         ConnectionDescriptor oldConnDescr = new ConnectionDescriptor(clientID, channel, true);
         m_clientIDs.remove(clientID, oldConnDescr);
@@ -659,6 +667,7 @@ public class ProtocolProcessor {
      * Remove the clientID from topic subscription, if not previously subscribed,
      * doesn't reply any error
      */
+    @Override
     public void processUnsubscribe(Channel channel, UnsubscribeMessage msg) {
         List<String> topics = msg.topicFilters();
         int messageID = msg.getMessageID();
@@ -691,6 +700,7 @@ public class ProtocolProcessor {
         channel.writeAndFlush(ackMessage);
     }
 
+    @Override
     public void processSubscribe(Channel channel, SubscribeMessage msg) {
         String clientID = NettyUtils.clientID(channel);
         LOG.debug("SUBSCRIBE client <{}> packetID {}", clientID, msg.getMessageID());

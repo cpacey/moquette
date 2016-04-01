@@ -23,7 +23,7 @@ import io.moquette.spi.impl.SimpleMessaging;
 import io.moquette.server.config.FilesystemConfig;
 import io.moquette.server.config.IConfig;
 import io.moquette.server.netty.NettyAcceptor;
-import io.moquette.spi.impl.ProtocolProcessor;
+import io.moquette.spi.impl.ProtocolProcessorBase;
 import io.moquette.spi.security.IAuthenticator;
 import io.moquette.spi.security.IAuthorizator;
 import io.moquette.spi.security.ISslContextCreator;
@@ -48,7 +48,7 @@ public class Server {
 
     private volatile boolean m_initialized;
 
-    private ProtocolProcessor m_processor;
+    private ProtocolProcessorBase m_processor;
 
     public static void main(String[] args) throws IOException {
         final Server server = new Server();
@@ -122,7 +122,7 @@ public class Server {
             config.setProperty("intercept.handler", handlerProp);
         }
         LOG.info("Persistent store file: " + config.getProperty(BrokerConstants.PERSISTENT_STORE_PROPERTY_NAME));
-        final ProtocolProcessor processor = SimpleMessaging.getInstance().init(config, handlers, authenticator, authorizator);
+        final ProtocolProcessorBase processor = SimpleMessaging.getInstance().init(config, handlers, authenticator, authorizator);
 
         if (sslCtxCreator == null) {
             sslCtxCreator = new DefaultMoquetteSslContextCreator(config);

@@ -55,7 +55,7 @@ public class SimpleMessaging {
 
     private static SimpleMessaging INSTANCE;
     
-    private final ProtocolProcessor m_processor = new ProtocolProcessor();
+    private final ProtocolProcessor2 m_processor = new ProtocolProcessor2();
 
     private SimpleMessaging() {
     }
@@ -78,7 +78,7 @@ public class SimpleMessaging {
      * @param authorizator an implementation of the authorizator to be used, if null load that specified in config
      *                      and fallback on the default one (permit all).
      * */
-    public ProtocolProcessor init(IConfig props, List<? extends InterceptHandler> embeddedObservers,
+    public ProtocolProcessorBase init(IConfig props, List<? extends InterceptHandler> embeddedObservers,
                                   IAuthenticator authenticator, IAuthorizator authorizator) {
         subscriptions = new SubscriptionsStore();
 
@@ -143,7 +143,7 @@ public class SimpleMessaging {
         }
 
         boolean allowAnonymous = Boolean.parseBoolean(props.getProperty(BrokerConstants.ALLOW_ANONYMOUS_PROPERTY_NAME, "true"));
-        m_processor.init(subscriptions, messagesStore, sessionsStore, authenticator, allowAnonymous, authorizator, m_interceptor);
+        m_processor.init(subscriptions, sessionsStore);
         return m_processor;
     }
     

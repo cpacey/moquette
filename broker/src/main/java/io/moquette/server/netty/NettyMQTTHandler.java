@@ -17,7 +17,7 @@ package io.moquette.server.netty;
 
 import io.moquette.parser.proto.Utils;
 import io.moquette.parser.proto.messages.*;
-import io.moquette.spi.impl.ProtocolProcessor;
+import io.moquette.spi.impl.ProtocolProcessorBase;
 import static io.moquette.parser.proto.messages.AbstractMessage.*;
 import io.netty.channel.ChannelHandler.Sharable;
 import io.netty.channel.ChannelHandlerContext;
@@ -36,9 +36,9 @@ import org.slf4j.LoggerFactory;
 public class NettyMQTTHandler extends ChannelInboundHandlerAdapter {
     
     private static final Logger LOG = LoggerFactory.getLogger(NettyMQTTHandler.class);
-    private final ProtocolProcessor m_processor;
+    private final ProtocolProcessorBase m_processor;
 
-    public NettyMQTTHandler(ProtocolProcessor processor) {
+    public NettyMQTTHandler(ProtocolProcessorBase processor) {
         m_processor = processor;
     }
 
