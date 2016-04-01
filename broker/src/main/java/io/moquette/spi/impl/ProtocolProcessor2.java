@@ -29,9 +29,13 @@ import io.moquette.spi.impl.subscriptions.SubscriptionsStore;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelPipeline;
 import io.netty.handler.timeout.IdleStateHandler;
+import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
@@ -56,8 +60,10 @@ public class ProtocolProcessor2 implements ProtocolProcessorBase {
     private static final Logger LOG = LoggerFactory.getLogger(ProtocolProcessor2.class);
 
     protected ConcurrentMap<String, ConnectionDescriptor> m_clientIDs;
+    protected ConcurrentMap<String, KafkaConsumerWrapper> m_kafkaConsumers = new ConcurrentHashMap<>();
     private SubscriptionsStore subscriptions;
     private ISessionsStore m_sessionsStore;
+    private KafkaBackend m_kafkaBackend;
 
     ProtocolProcessor2() {}
 
@@ -72,6 +78,8 @@ public class ProtocolProcessor2 implements ProtocolProcessorBase {
         this.subscriptions = subscriptions;
         LOG.trace("subscription tree on init {}", subscriptions.dumpTree());
         m_sessionsStore = sessionsStore;
+        m_kafkaBackend = new KafkaBackend();
+        m_kafkaBackend.init();
     }
 
     @Override
@@ -172,9 +180,7 @@ public class ProtocolProcessor2 implements ProtocolProcessorBase {
             return;
         }
 
-        StoredMessage toStoreMsg = asStoredMessage(msg);
-        toStoreMsg.setClientID(clientID);
-        route2Subscribers(toStoreMsg);
+        m_kafkaBackend.publish(msg);
     }
 
     /**
@@ -186,93 +192,7 @@ public class ProtocolProcessor2 implements ProtocolProcessorBase {
      * it's publishing.
      * */
     public void internalPublish(PublishMessage msg) {
-        final AbstractMessage.QOSType qos = msg.getQos();
-        final String topic = msg.getTopicName();
-        LOG.info("embedded PUBLISH on topic <{}> with QoS {}", topic, qos);
-
-        IMessagesStore.StoredMessage toStoreMsg = asStoredMessage(msg);
-        toStoreMsg.setClientID("BROKER_SELF");
-        toStoreMsg.setMessageID(1);
-        route2Subscribers(toStoreMsg);
-    }
-
-    /**
-     * Flood the subscribers with the message to notify. MessageID is optional and should only used for QoS 1 and 2
-     * */
-    void route2Subscribers(StoredMessage pubMsg) {
-        final String topic = pubMsg.getTopic();
-        final QOSType publishingQos = pubMsg.getQos();
-        final ByteBuffer origMessage = pubMsg.getMessage();
-        LOG.debug("route2Subscribers republishing to existing subscribers that matches the topic {}", topic);
-        if (LOG.isTraceEnabled()) {
-            LOG.trace("content <{}>", DebugUtils.payload2Str(origMessage));
-            LOG.trace("subscription tree {}", subscriptions.dumpTree());
-        }
-
-        for (final Subscription sub : subscriptions.matches(topic)) {
-            QOSType qos = publishingQos;
-            if (qos.byteValue() > sub.getRequestedQos().byteValue()) {
-                qos = sub.getRequestedQos();
-            }
-            ClientSession targetSession = m_sessionsStore.sessionForClient(sub.getClientId());
-            verifyToActivate(sub.getClientId(), targetSession);
-
-            LOG.debug("Broker republishing to client <{}> topic <{}> qos <{}>, active {}",
-                    sub.getClientId(), sub.getTopicFilter(), qos, targetSession.isActive());
-            ByteBuffer message = origMessage.duplicate();
-
-            if (qos == QOSType.MOST_ONE && targetSession.isActive()) {
-                //QoS 0
-                directSend(targetSession, topic, qos, message, false, null);
-            }
-        }
-    }
-
-    protected void directSend(ClientSession clientsession, String topic, QOSType qos,
-                              ByteBuffer message, boolean retained, Integer messageID) {
-        String clientId = clientsession.clientID;
-        LOG.debug("directSend invoked clientId <{}> on topic <{}> QoS {} retained {} messageID {}",
-                clientId, topic, qos, retained, messageID);
-        PublishMessage pubMessage = new PublishMessage();
-        pubMessage.setRetainFlag(retained);
-        pubMessage.setTopicName(topic);
-        pubMessage.setQos(qos);
-        pubMessage.setPayload(message);
-
-        LOG.info("send publish message to <{}> on topic <{}>", clientId, topic);
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("content <{}>", DebugUtils.payload2Str(message));
-        }
-        //set the PacketIdentifier only for QoS > 0
-        if (pubMessage.getQos() != QOSType.MOST_ONE) {
-            pubMessage.setMessageID(messageID);
-        } else {
-            if (messageID != null) {
-                throw new RuntimeException("Internal bad error, trying to forwardPublish a QoS 0 message " +
-                        "with PacketIdentifier: " + messageID);
-            }
-        }
-
-        if (m_clientIDs == null) {
-            throw new RuntimeException("Internal bad error, found m_clientIDs to null while it should be " +
-                    "initialized, somewhere it's overwritten!!");
-        }
-        //LOG.trace("clientIDs are {}", m_clientIDs);
-        if (m_clientIDs.get(clientId) == null) {
-            //TODO while we were publishing to the target client, that client disconnected,
-            // could happen is not an error HANDLE IT
-            throw new RuntimeException(String.format("Can't find a ConnectionDescriptor for client <%s> in cache <%s>",
-                    clientId, m_clientIDs));
-        }
-        Channel channel = m_clientIDs.get(clientId).channel;
-        LOG.trace("Session for clientId {}", clientId);
-        if (channel.isWritable()) {
-            //if channel is writable don't enqueue
-            channel.write(pubMessage);
-        } else {
-            //enqueue to the client session
-            clientsession.enqueue(pubMessage);
-        }
+        // No-op
     }
 
     /**
@@ -334,8 +254,8 @@ public class ProtocolProcessor2 implements ProtocolProcessorBase {
 
         LOG.debug("UNSUBSCRIBE subscription on topics {} for clientID <{}>", topics, clientID);
 
-        ClientSession clientSession = m_sessionsStore.sessionForClient(clientID);
-        verifyToActivate(clientID, clientSession);
+        KafkaConsumerWrapper consumer = m_kafkaConsumers.get(clientID);
+
         for (String topic : topics) {
             boolean validTopic = SubscriptionsStore.validate(topic);
             if (!validTopic) {
@@ -345,8 +265,9 @@ public class ProtocolProcessor2 implements ProtocolProcessorBase {
                 return;
             }
 
-            subscriptions.removeSubscription(topic, clientID);
-            clientSession.unsubscribeFrom(topic);
+            if( consumer != null) {
+                consumer.unsubscribeFromTopic(topic);
+            }
         }
 
         //ack the client
@@ -362,51 +283,36 @@ public class ProtocolProcessor2 implements ProtocolProcessorBase {
         String clientID = NettyUtils.clientID(channel);
         LOG.debug("SUBSCRIBE client <{}> packetID {}", clientID, msg.getMessageID());
 
-        ClientSession clientSession = m_sessionsStore.sessionForClient(clientID);
-        verifyToActivate(clientID, clientSession);
         //ack the client
         SubAckMessage ackMessage = new SubAckMessage();
         ackMessage.setMessageID(msg.getMessageID());
+        ackMessage.addType(QOSType.MOST_ONE);
 
-        List<Subscription> newSubscriptions = new ArrayList<>();
-        for (SubscribeMessage.Couple req : msg.subscriptions()) {
-            QOSType qos = QOSType.valueOf(req.qos);
-            Subscription newSubscription = new Subscription(clientID, req.topicFilter, qos);
-            boolean valid = clientSession.subscribe(req.topicFilter, newSubscription);
-            ackMessage.addType(valid ? qos : QOSType.FAILURE);
-            if (valid) {
-                newSubscriptions.add(newSubscription);
-            }
+        KafkaConsumerWrapper consumer = m_kafkaConsumers.get(clientID);
+        if( consumer == null) {
+            consumer = m_kafkaBackend.createKafkaConsumer(channel);
+            m_kafkaConsumers.put(clientID, consumer);
         }
 
-        //fire the publish
-        for(Subscription subscription : newSubscriptions) {
-            subscribeSingleTopic(subscription);
+        for( SubscribeMessage.Couple couple : msg.subscriptions() ){
+            consumer.subscribeToAdditionalTopic(couple.topicFilter);
         }
 
-        LOG.debug("SUBACK for packetID {}", msg.getMessageID());
-        if (LOG.isTraceEnabled()) {
-            LOG.trace("subscription tree {}", subscriptions.dumpTree());
-        }
         channel.writeAndFlush(ackMessage);
-    }
-
-    private boolean subscribeSingleTopic(final Subscription newSubscription) {
-        subscriptions.add(newSubscription.asClientTopicCouple());
-        return true;
     }
 
     public void notifyChannelWritable(Channel channel) {
         String clientID = NettyUtils.clientID(channel);
-        ClientSession clientSession = m_sessionsStore.sessionForClient(clientID);
-        boolean emptyQueue = false;
-        while (channel.isWritable()  && !emptyQueue) {
-            AbstractMessage msg = clientSession.dequeue();
-            if (msg == null) {
-                emptyQueue = true;
-            } else {
-                channel.write(msg);
-            }
+        KafkaConsumerWrapper consumer = m_kafkaConsumers.get(clientID);
+
+        if (consumer == null) {
+            return;
+        }
+
+        // TODO: while (channel.isWritable()) {
+        List<PublishMessage> messages = consumer.poll(0);
+        for (PublishMessage msg : messages) {
+            channel.write(msg);
         }
         channel.flush();
     }
