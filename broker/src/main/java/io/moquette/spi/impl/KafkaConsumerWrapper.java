@@ -6,13 +6,12 @@ import io.netty.channel.Channel;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.apache.kafka.common.PartitionInfo;
+import org.apache.kafka.common.TopicPartition;
 
 import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 public class KafkaConsumerWrapper {
 
@@ -79,14 +78,47 @@ public class KafkaConsumerWrapper {
     public void subscribeToAdditionalTopic(String topic) {
         synchronized (lock) {
             subscribedTopics.add(KafkaBackend.encodeMqttTopicToKafkaTopic(topic));
-            consumer.subscribe(new ArrayList<>(subscribedTopics));
+            updateConsumerSubscriptions();
         }
     }
 
     public void unsubscribeFromTopic(String topic) {
         synchronized (lock) {
             subscribedTopics.remove(KafkaBackend.encodeMqttTopicToKafkaTopic(topic));
-            consumer.subscribe(new ArrayList<>(subscribedTopics));
+            updateConsumerSubscriptions();
         }
+    }
+
+
+    private void updateConsumerSubscriptions() {
+        Map<TopicPartition, Long> partitionPositions = getAllTopicPartitionPositions();
+
+        consumer.subscribe(new ArrayList<>(subscribedTopics));
+
+        setTopicPartitionPositions(partitionPositions);
+    }
+
+    private Map<TopicPartition, Long> getAllTopicPartitionPositions() {
+        Set<String> activeTopics = consumer.subscription();
+
+        Map<TopicPartition, Long> partitionPositions = new HashMap<>();
+        for( String topic : activeTopics ) {
+            List<PartitionInfo> partitions = consumer.partitionsFor( topic );
+
+            for( PartitionInfo partitionInfo : partitions ) {
+                TopicPartition topicPartition = new TopicPartition( partitionInfo.topic(), partitionInfo.partition() );
+
+                long position = consumer.position( topicPartition );
+
+                partitionPositions.put( topicPartition, position );
+            }
+        }
+        return partitionPositions;
+    }
+
+    private void setTopicPartitionPositions(Map<TopicPartition, Long> partitionPositions) {
+        partitionPositions.forEach( (key, value ) -> {
+            consumer.seek( key, value.longValue() );
+        } );
     }
 }
