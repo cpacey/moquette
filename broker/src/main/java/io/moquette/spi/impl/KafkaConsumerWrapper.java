@@ -19,25 +19,29 @@ import java.util.concurrent.locks.ReentrantLock;
 public class KafkaConsumerWrapper {
 
     private final Consumer<String, String> consumer;
-    private Channel channel;
     private final Set<String> subscribedTopics;
     private final Lock lock;
     private final Condition condition;
+    private volatile boolean keepRunningThread = true;
 
     public KafkaConsumerWrapper(Consumer<String, String> consumer, Channel channel) {
         this.consumer = consumer;
-        this.channel = channel;
         this.subscribedTopics = new HashSet<>();
         this.lock = new ReentrantLock();
         this.condition = lock.newCondition();
 
         new Thread(() -> {
-            while (true) {
+            while (keepRunningThread) {
                 lock.lock();
 
                 try {
                     while (subscribedTopics.isEmpty()) {
                         condition.awaitUninterruptibly();
+                    }
+
+                    // Might have been woken up for shutdown.
+                    if( !keepRunningThread ) {
+                        break;
                     }
 
                     ConsumerRecords<String, String> records = consumer.poll(100);
@@ -50,7 +54,21 @@ public class KafkaConsumerWrapper {
                     lock.unlock();
                 }
             }
+            System.out.println("shutting down thread");
+            consumer.close();
         }).start();
+    }
+
+    public void shutdown() {
+        this.keepRunningThread = false;
+
+        // This is terrible!  Shutdown should not block.
+        lock.lock();
+        try {
+            condition.signalAll();
+        } finally {
+            lock.unlock();
+        }
     }
 
     private List<PublishMessage> getPublishMessages(ConsumerRecords<String, String> records) {
