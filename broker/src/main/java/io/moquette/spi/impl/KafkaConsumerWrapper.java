@@ -12,51 +12,45 @@ import org.apache.kafka.common.TopicPartition;
 import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
 import java.util.*;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class KafkaConsumerWrapper {
 
     private final Consumer<String, String> consumer;
     private Channel channel;
     private final Set<String> subscribedTopics;
-    private final Object lock;
+    private final Lock lock;
+    private final Condition condition;
 
     public KafkaConsumerWrapper(Consumer<String, String> consumer, Channel channel) {
         this.consumer = consumer;
         this.channel = channel;
         this.subscribedTopics = new HashSet<>();
-        this.lock = new Object();
+        this.lock = new ReentrantLock();
+        this.condition = lock.newCondition();
 
         new Thread(() -> {
             while (true) {
-                List<PublishMessage> messages = this.poll(100);
-                if (!messages.isEmpty()) {
-                    messages.forEach(channel::write);
-                    channel.flush();
+                lock.lock();
+
+                try {
+                    while (subscribedTopics.isEmpty()) {
+                        condition.awaitUninterruptibly();
+                    }
+
+                    ConsumerRecords<String, String> records = consumer.poll(100);
+                    List<PublishMessage> messages  = getPublishMessages(records);
+                    if (!messages.isEmpty()) {
+                        messages.forEach(channel::write);
+                        channel.flush();
+                    }
+                } finally {
+                    lock.unlock();
                 }
             }
         }).start();
-    }
-
-    public List<PublishMessage> poll(long timeout) {
-        ConsumerRecords<String, String> records = this.getRecords(timeout);
-        List<PublishMessage> list = getPublishMessages(records);
-        return list;
-    }
-
-    private ConsumerRecords<String, String> getRecords(long timeout) {
-        synchronized (lock) {
-            if (!subscribedTopics.isEmpty()) {
-                return consumer.poll(timeout);
-            } else {
-                try {
-                    Thread.sleep(timeout);
-                } catch( InterruptedException e ) {
-                    // Barf
-                    Thread.currentThread().interrupt();
-                }
-                return ConsumerRecords.empty();
-            }
-        }
     }
 
     private List<PublishMessage> getPublishMessages(ConsumerRecords<String, String> records) {
@@ -85,16 +79,23 @@ public class KafkaConsumerWrapper {
     }
 
     public void subscribeToAdditionalTopic(String topic) {
-        synchronized (lock) {
+        lock.lock();
+        try {
             subscribedTopics.add(KafkaBackend.encodeMqttTopicToKafkaTopic(topic));
             updateConsumerSubscriptions();
+            condition.signalAll();
+        } finally {
+            lock.unlock();
         }
     }
 
     public void unsubscribeFromTopic(String topic) {
-        synchronized (lock) {
+        lock.lock();
+        try {
             subscribedTopics.remove(KafkaBackend.encodeMqttTopicToKafkaTopic(topic));
             updateConsumerSubscriptions();
+        } finally {
+            lock.unlock();
         }
     }
 

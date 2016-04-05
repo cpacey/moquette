@@ -310,10 +310,10 @@ public class ProtocolProcessor2 implements ProtocolProcessorBase {
         }
 
         // TODO: while (channel.isWritable()) {
-        List<PublishMessage> messages = consumer.poll(0);
-        for (PublishMessage msg : messages) {
-            channel.write(msg);
-        }
-        channel.flush();
+//        List<PublishMessage> messages = consumer.poll(0);
+//        for (PublishMessage msg : messages) {
+//            channel.write(msg);
+//        }
+//        channel.flush();
     }
 }
