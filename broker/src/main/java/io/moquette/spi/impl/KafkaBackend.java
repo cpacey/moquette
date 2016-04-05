@@ -29,7 +29,7 @@ public class KafkaBackend {
         } catch (UnsupportedEncodingException e) {
             throw new RuntimeException(e);
         }
-        m_producer.send(new ProducerRecord<String, String>(topicName, message));
+        m_producer.send(new ProducerRecord<>(topicName, message));
     }
 
     private static Producer<String, String> createKafkaProducer() {
@@ -59,10 +59,10 @@ public class KafkaBackend {
         return consumer;
     }
 
-    public KafkaConsumerWrapper createKafkaConsumer(io.netty.channel.Channel channel) {
+    public KafkaConsumerWrapper createKafkaConsumer() {
         Consumer<String, String> consumer = createKafkaConsumerRaw();
 
-        return new KafkaConsumerWrapper(consumer, channel);
+        return new KafkaConsumerWrapper(consumer);
     }
 
     public static String encodeMqttTopicToKafkaTopic(String rawTopic) {

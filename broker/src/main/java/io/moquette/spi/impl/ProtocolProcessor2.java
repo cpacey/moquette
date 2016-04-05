@@ -60,9 +60,7 @@ public class ProtocolProcessor2 implements ProtocolProcessorBase {
     private static final Logger LOG = LoggerFactory.getLogger(ProtocolProcessor2.class);
 
     protected ConcurrentMap<String, ConnectionDescriptor> m_clientIDs;
-    protected ConcurrentMap<String, KafkaConsumerWrapper> m_kafkaConsumers = new ConcurrentHashMap<>();
-    private SubscriptionsStore subscriptions;
-    private ISessionsStore m_sessionsStore;
+    private KafkaConsumerWrapper m_kafkaConsumer;
     private KafkaBackend m_kafkaBackend;
 
     ProtocolProcessor2() {}
@@ -75,11 +73,11 @@ public class ProtocolProcessor2 implements ProtocolProcessorBase {
     void init(SubscriptionsStore subscriptions,
               ISessionsStore sessionsStore) {
         this.m_clientIDs = new ConcurrentHashMap<>();
-        this.subscriptions = subscriptions;
         LOG.trace("subscription tree on init {}", subscriptions.dumpTree());
-        m_sessionsStore = sessionsStore;
         m_kafkaBackend = new KafkaBackend();
         m_kafkaBackend.init();
+
+        m_kafkaConsumer = m_kafkaBackend.createKafkaConsumer();
     }
 
     @Override
@@ -221,8 +219,6 @@ public class ProtocolProcessor2 implements ProtocolProcessorBase {
         boolean cleanSession = NettyUtils.cleanSession(channel);
         LOG.info("DISCONNECT client <{}> with clean session {}", clientID, cleanSession);
 
-        cleanUpKafkaConsumer(clientID);
-
         m_clientIDs.remove(clientID);
         channel.close();
 
@@ -231,21 +227,13 @@ public class ProtocolProcessor2 implements ProtocolProcessorBase {
 
     @Override
     public void processConnectionLost(String clientID, boolean sessionStolen, Channel channel) {
-        cleanUpKafkaConsumer(clientID);
+        // m_kafkaConsumer.removeAllSubscriptions(clientID);
 
         ConnectionDescriptor oldConnDescr = new ConnectionDescriptor(clientID, channel, true);
         m_clientIDs.remove(clientID, oldConnDescr);
         //If already removed a disconnect message was already processed for this clientID
         if (sessionStolen) {
             LOG.info("Lost connection with client <{}>", clientID);
-        }
-    }
-
-    private void cleanUpKafkaConsumer(String clientID) {
-        KafkaConsumerWrapper consumer = m_kafkaConsumers.get(clientID);
-        if(consumer != null) {
-            consumer.shutdown();
-            m_kafkaConsumers.remove(clientID);
         }
     }
 
@@ -261,8 +249,6 @@ public class ProtocolProcessor2 implements ProtocolProcessorBase {
 
         LOG.debug("UNSUBSCRIBE subscription on topics {} for clientID <{}>", topics, clientID);
 
-        KafkaConsumerWrapper consumer = m_kafkaConsumers.get(clientID);
-
         for (String topic : topics) {
             boolean validTopic = SubscriptionsStore.validate(topic);
             if (!validTopic) {
@@ -272,9 +258,7 @@ public class ProtocolProcessor2 implements ProtocolProcessorBase {
                 return;
             }
 
-            if( consumer != null) {
-                consumer.unsubscribeFromTopic(topic);
-            }
+            m_kafkaConsumer.unsubscribeFromTopic(topic, channel);
         }
 
         //ack the client
@@ -295,14 +279,8 @@ public class ProtocolProcessor2 implements ProtocolProcessorBase {
         ackMessage.setMessageID(msg.getMessageID());
         ackMessage.addType(QOSType.MOST_ONE);
 
-        KafkaConsumerWrapper consumer = m_kafkaConsumers.get(clientID);
-        if( consumer == null) {
-            consumer = m_kafkaBackend.createKafkaConsumer(channel);
-            m_kafkaConsumers.put(clientID, consumer);
-        }
-
         for( SubscribeMessage.Couple couple : msg.subscriptions() ){
-            consumer.subscribeToAdditionalTopic(couple.topicFilter);
+            m_kafkaConsumer.subscribeToAdditionalTopic(couple.topicFilter, channel);
         }
 
         channel.writeAndFlush(ackMessage);
@@ -310,11 +288,6 @@ public class ProtocolProcessor2 implements ProtocolProcessorBase {
 
     public void notifyChannelWritable(Channel channel) {
         String clientID = NettyUtils.clientID(channel);
-        KafkaConsumerWrapper consumer = m_kafkaConsumers.get(clientID);
-
-        if (consumer == null) {
-            return;
-        }
 
         // TODO: while (channel.isWritable()) {
 //        List<PublishMessage> messages = consumer.poll(0);
