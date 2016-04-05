@@ -37,19 +37,29 @@ public class KafkaConsumerWrapper {
         }).start();
     }
 
-    private ConsumerRecords<String, String> pollInternal(long timeout) {
+    public List<PublishMessage> poll(long timeout) {
+        ConsumerRecords<String, String> records = this.getRecords(timeout);
+        List<PublishMessage> list = getPublishMessages(records);
+        return list;
+    }
+
+    private ConsumerRecords<String, String> getRecords(long timeout) {
         synchronized (lock) {
             if (!subscribedTopics.isEmpty()) {
                 return consumer.poll(timeout);
             } else {
+                try {
+                    Thread.sleep(timeout);
+                } catch( InterruptedException e ) {
+                    // Barf
+                    Thread.currentThread().interrupt();
+                }
                 return ConsumerRecords.empty();
             }
         }
     }
 
-    public List<PublishMessage> poll(long timeout) {
-        ConsumerRecords<String, String> records = this.pollInternal(timeout);
-
+    private List<PublishMessage> getPublishMessages(ConsumerRecords<String, String> records) {
         List<PublishMessage> list = new ArrayList<>();
 
         for (ConsumerRecord<String, String> record : records) {
@@ -71,7 +81,6 @@ public class KafkaConsumerWrapper {
 
             list.add(publishMessage);
         }
-
         return list;
     }
 
