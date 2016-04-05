@@ -24,9 +24,9 @@ public class KafkaConsumerWrapper {
 
     private final Consumer<String, String> consumer;
     private final HashMap<String, Set<Channel>> subscribedTopics;
+    private boolean subscribedTopicsDirty = false;
     private final Lock lock;
     private final Condition condition;
-    private volatile boolean keepRunningThread = true;
 
     public KafkaConsumerWrapper(Consumer<String, String> consumer) {
         this.consumer = consumer;
@@ -35,51 +35,43 @@ public class KafkaConsumerWrapper {
         this.condition = lock.newCondition();
 
         new Thread(() -> {
-            while (keepRunningThread) {
-                lock.lock();
-
-                try {
+            while (true) {
+                List<String> newSubscriptions = null;
+                synchronized (subscribedTopics) {
                     while (subscribedTopics.isEmpty()) {
-                        condition.awaitUninterruptibly();
+                        try {
+                            subscribedTopics.wait();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
                     }
 
-                    // Might have been woken up for shutdown.
-                    if( !keepRunningThread ) {
-                        break;
+                    if (subscribedTopicsDirty) {
+                        newSubscriptions = computeSubscriptionList(subscribedTopics.keySet());
+                        subscribedTopicsDirty = false;
                     }
+                }
 
-                    ConsumerRecords<String, String> records = consumer.poll(100);
-                    List<PublishMessage> messages  = getPublishMessages(records);
-                    if (!messages.isEmpty()) {
-                        messages.forEach( m -> {
-                            LOG.debug("PUBLISH from Kafka on topic {}", m.getTopicName());
-                            Set<Channel> subscribers = subscribedTopics.get(m.getTopicName());
-                            subscribers.forEach(ch -> {
-                                if (ch.isActive()) {
-                                    ch.writeAndFlush(m);
-                                }
-                            });
-                        } );
-                    }
-                } finally {
-                    lock.unlock();
+                if (newSubscriptions != null) {
+                    consumer.subscribe(newSubscriptions);
+                }
+
+                ConsumerRecords<String, String> records = consumer.poll(100);
+
+                if (!records.isEmpty()) {
+                    List<PublishMessage> messages = getPublishMessages(records);
+                    messages.forEach( m -> {
+                        LOG.debug("PUBLISH from Kafka on topic {}", m.getTopicName());
+                        Set<Channel> subscribers = subscribedTopics.get(m.getTopicName());
+                        subscribers.forEach(ch -> {
+                            if (ch.isActive()) {
+                                ch.writeAndFlush(m);
+                            }
+                        });
+                    } );
                 }
             }
-            System.out.println("shutting down thread");
-            consumer.close();
         }, "Kafka polling thread").start();
-    }
-
-    public void shutdown() {
-        this.keepRunningThread = false;
-
-        // This is terrible!  Shutdown should not block.
-        lock.lock();
-        try {
-            condition.signalAll();
-        } finally {
-            lock.unlock();
-        }
     }
 
     private List<PublishMessage> getPublishMessages(ConsumerRecords<String, String> records) {
@@ -108,29 +100,25 @@ public class KafkaConsumerWrapper {
     }
 
     public void subscribeToAdditionalTopic(String topic, Channel channel) {
-        lock.lock();
-        try {
+        synchronized (subscribedTopics) {
             Set<Channel> topicSubscribers = subscribedTopics.get(topic);
 
             if(topicSubscribers == null) {
                 topicSubscribers = new HashSet<>();
                 subscribedTopics.put(topic, topicSubscribers);
 
-                topicSubscribers.add(channel);
+                subscribedTopicsDirty = true;
 
-                updateConsumerSubscriptions();
+                topicSubscribers.add(channel);
             } else {
                 topicSubscribers.add(channel);
             }
-            condition.signalAll();
-        } finally {
-            lock.unlock();
+            subscribedTopics.notifyAll();
         }
     }
 
     public void unsubscribeFromTopic(String topic, Channel channel) {
-        lock.lock();
-        try {
+        synchronized (subscribedTopics) {
             Set<Channel> topicSubscribers = subscribedTopics.get(topic);
 
             if(topicSubscribers == null) {
@@ -141,16 +129,9 @@ public class KafkaConsumerWrapper {
 
             if( topicSubscribers.isEmpty() ) {
                 subscribedTopics.remove(topic);
-                updateConsumerSubscriptions();
+                subscribedTopicsDirty = true;
             }
-        } finally {
-            lock.unlock();
         }
-    }
-
-    private void updateConsumerSubscriptions() {
-        List<String> subscriptions = computeSubscriptionList(subscribedTopics.keySet());
-        consumer.subscribe(subscriptions);
     }
 
     private static List<String> computeSubscriptionList(Set<String> strings) {
