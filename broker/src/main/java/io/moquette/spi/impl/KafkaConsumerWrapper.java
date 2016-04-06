@@ -62,12 +62,21 @@ public class KafkaConsumerWrapper {
                     List<PublishMessage> messages = getPublishMessages(records);
                     messages.forEach( m -> {
                         LOG.debug("PUBLISH from Kafka on topic {}", m.getTopicName());
-                        Set<Channel> subscribers = subscribedTopics.get(m.getTopicName());
-                        subscribers.forEach(ch -> {
-                            if (ch.isActive()) {
-                                ch.writeAndFlush(m);
+                        Set<Channel> subscribers = null;
+                        synchronized (subscribedTopics) {
+                            Set<Channel> channels = subscribedTopics.get(m.getTopicName());
+                            if (channels != null) {
+                                subscribers = new HashSet(channels);
                             }
-                        });
+                        }
+
+                        if (subscribers != null) {
+                            subscribers.forEach(ch -> {
+                                if (ch.isActive()) {
+                                    ch.writeAndFlush(m);
+                                }
+                            });
+                        }
                     } );
                 }
             }
