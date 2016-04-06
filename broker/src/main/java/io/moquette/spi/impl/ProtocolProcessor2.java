@@ -219,6 +219,8 @@ public class ProtocolProcessor2 implements ProtocolProcessorBase {
         boolean cleanSession = NettyUtils.cleanSession(channel);
         LOG.info("DISCONNECT client <{}> with clean session {}", clientID, cleanSession);
 
+        m_kafkaConsumer.removeAllSubscriptions(channel);
+
         m_clientIDs.remove(clientID);
         channel.close();
 
@@ -227,7 +229,7 @@ public class ProtocolProcessor2 implements ProtocolProcessorBase {
 
     @Override
     public void processConnectionLost(String clientID, boolean sessionStolen, Channel channel) {
-        // m_kafkaConsumer.removeAllSubscriptions(clientID);
+        m_kafkaConsumer.removeAllSubscriptions(channel);
 
         ConnectionDescriptor oldConnDescr = new ConnectionDescriptor(clientID, channel, true);
         m_clientIDs.remove(clientID, oldConnDescr);

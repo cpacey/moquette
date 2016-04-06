@@ -6,33 +6,24 @@ import io.netty.channel.Channel;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
-import org.apache.kafka.common.PartitionInfo;
-import org.apache.kafka.common.TopicPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
 import java.util.*;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 
 public class KafkaConsumerWrapper {
 
     private static final Logger LOG = LoggerFactory.getLogger(KafkaConsumerWrapper.class);
 
-    private final Consumer<String, String> consumer;
     private final HashMap<String, Set<Channel>> subscribedTopics;
+    private final HashMap<Channel, Set<String>> topicsByChannel;
     private boolean subscribedTopicsDirty = false;
-    private final Lock lock;
-    private final Condition condition;
 
     public KafkaConsumerWrapper(Consumer<String, String> consumer) {
-        this.consumer = consumer;
         this.subscribedTopics = new HashMap<>();
-        this.lock = new ReentrantLock();
-        this.condition = lock.newCondition();
+        this.topicsByChannel = new HashMap<>();
 
         new Thread(() -> {
             while (true) {
@@ -110,36 +101,66 @@ public class KafkaConsumerWrapper {
 
     public void subscribeToAdditionalTopic(String topic, Channel channel) {
         synchronized (subscribedTopics) {
-            Set<Channel> topicSubscribers = subscribedTopics.get(topic);
-
-            if(topicSubscribers == null) {
-                topicSubscribers = new HashSet<>();
-                subscribedTopics.put(topic, topicSubscribers);
-
-                subscribedTopicsDirty = true;
-
-                topicSubscribers.add(channel);
-            } else {
-                topicSubscribers.add(channel);
-            }
-            subscribedTopics.notifyAll();
+            addSubscribedTopic(topic, channel);
+            addChannelTopic(topic, channel);
         }
+    }
+
+    private void addChannelTopic(String topic, Channel channel) {
+        Set<String> channelTopics = topicsByChannel.get(channel);
+        if (channelTopics == null) {
+            channelTopics = new HashSet<>();
+            topicsByChannel.put(channel, channelTopics);
+        }
+        channelTopics.add(topic);
+    }
+
+    private void addSubscribedTopic(String topic, Channel channel) {
+        Set<Channel> topicSubscribers = subscribedTopics.get(topic);
+
+        if(topicSubscribers == null) {
+            topicSubscribers = new HashSet<>();
+            subscribedTopics.put(topic, topicSubscribers);
+
+            subscribedTopicsDirty = true;
+
+            topicSubscribers.add(channel);
+        } else {
+            topicSubscribers.add(channel);
+        }
+        subscribedTopics.notifyAll();
     }
 
     public void unsubscribeFromTopic(String topic, Channel channel) {
         synchronized (subscribedTopics) {
-            Set<Channel> topicSubscribers = subscribedTopics.get(topic);
+            removeSubscribedTopic(topic, channel);
+            removeChannelTopic(topic, channel);
+        }
+    }
 
-            if(topicSubscribers == null) {
-                return;
-            }
+    private void removeSubscribedTopic(String topic, Channel channel) {
+        Set<Channel> topicSubscribers = subscribedTopics.get(topic);
 
+        if(topicSubscribers != null) {
             topicSubscribers.remove(channel);
 
-            if( topicSubscribers.isEmpty() ) {
+            if (topicSubscribers.isEmpty()) {
                 subscribedTopics.remove(topic);
                 subscribedTopicsDirty = true;
             }
+        }
+    }
+
+    private void removeChannelTopic(String topic, Channel channel) {
+        Set<String> channelTopics = topicsByChannel.get(channel);
+        if (channelTopics == null) {
+            return;
+        }
+
+        channelTopics.remove(topic);
+
+        if (channelTopics.isEmpty()) {
+            topicsByChannel.remove(channel, channelTopics);
         }
     }
 
@@ -147,5 +168,19 @@ public class KafkaConsumerWrapper {
         ArrayList<String> list = new ArrayList<>();
         strings.forEach(s -> list.add(KafkaBackend.encodeMqttTopicToKafkaTopic(s)));
         return list;
+    }
+
+    public void removeAllSubscriptions(Channel channel) {
+        synchronized (subscribedTopics) {
+            Set<String> channelTopics = topicsByChannel.get(channel);
+
+            if (channelTopics == null) {
+                return;
+            }
+
+            channelTopics.forEach(t -> removeSubscribedTopic(t, channel));
+
+            topicsByChannel.remove(channel);
+        }
     }
 }
