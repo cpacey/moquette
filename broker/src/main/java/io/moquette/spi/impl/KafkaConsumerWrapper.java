@@ -50,21 +50,35 @@ public class KafkaConsumerWrapper {
                 ConsumerRecords<String, String> records = consumer.poll(100);
 
                 if (!records.isEmpty()) {
-                    List<PublishMessage> messages = getPublishMessages(records);
-                    messages.forEach( m -> {
-                        LOG.debug("PUBLISH from Kafka on topic {}", m.getTopicName());
+                    records.forEach( record -> {
+                        String topic = KafkaBackend.decodeMqttTopicFromKafkaTopic(record.topic());
+                        LOG.debug("PUBLISH from Kafka on topic {}", topic);
+
                         Set<Channel> subscribers = null;
                         synchronized (subscribedTopics) {
-                            Set<Channel> channels = subscribedTopics.get(m.getTopicName());
+                            Set<Channel> channels = subscribedTopics.get(topic);
                             if (channels != null) {
                                 subscribers = new HashSet(channels);
                             }
                         }
 
+                        byte[] data;
+                        try {
+                            data = record.value().getBytes("UTF-8");
+                        } catch (UnsupportedEncodingException e) {
+                            throw new RuntimeException(e);
+                        }
+
                         if (subscribers != null) {
                             subscribers.forEach(ch -> {
                                 if (ch.isActive()) {
-                                    ch.writeAndFlush(m);
+                                    PublishMessage msg = new PublishMessage();
+
+                                    msg.setTopicName(topic);
+                                    msg.setQos(AbstractMessage.QOSType.MOST_ONE);
+                                    msg.setPayload(ByteBuffer.wrap(data));
+
+                                    ch.writeAndFlush(msg);
                                 }
                             });
                         }
@@ -72,31 +86,6 @@ public class KafkaConsumerWrapper {
                 }
             }
         }, "Kafka polling thread").start();
-    }
-
-    private List<PublishMessage> getPublishMessages(ConsumerRecords<String, String> records) {
-        List<PublishMessage> list = new ArrayList<>();
-
-        for (ConsumerRecord<String, String> record : records) {
-
-            PublishMessage publishMessage = new PublishMessage();
-
-            publishMessage.setRetainFlag(false);
-
-            String mqttTopic = KafkaBackend.decodeMqttTopicFromKafkaTopic(record.topic());
-            publishMessage.setTopicName(mqttTopic);
-
-            try {
-                publishMessage.setPayload(ByteBuffer.wrap(record.value().getBytes("UTF-8")));
-            } catch (UnsupportedEncodingException e) {
-                throw new RuntimeException(e);
-            }
-
-            publishMessage.setQos(AbstractMessage.QOSType.MOST_ONE);
-
-            list.add(publishMessage);
-        }
-        return list;
     }
 
     public void subscribeToAdditionalTopic(String topic, Channel channel) {
