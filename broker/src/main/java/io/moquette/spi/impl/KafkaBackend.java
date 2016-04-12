@@ -33,7 +33,14 @@ public class KafkaBackend {
         } catch (UnsupportedEncodingException e) {
             throw new RuntimeException(e);
         }
-        m_producer.send(new ProducerRecord<>(topicName, message));
+        m_producer.send(
+            new ProducerRecord<>(topicName, message),
+            (metadata, err) -> {
+                if ( err != null ) {
+                    LOG.error( "failed to publish", err );
+                }
+            }
+        );
     }
 
     private static Producer<String, String> createKafkaProducer() {
@@ -70,6 +77,8 @@ public class KafkaBackend {
             LOG.error("missing KAFKA_SERVERS");
             System.exit(1);
         }
+
+        LOG.info("Using KAFKA_SERVERS {}", servers);
 
         return servers;
     }
