@@ -171,6 +171,8 @@ the server application.  Debugging was sometimes enabled, depending on whether
 was expecting the test run to produce an error state worth inspecting.
 
 Kafka was running as a 3-broker cluster with 1 Zookeeper node.  These 4 nodes
+were running as docker containers on my desktop, and can be run using the
+docker-compose.yml file in the root of this repo.
 
 Initial (development) load testing was done using [emqtt_benchmark](https://github.com/emqtt/emqtt_benchmark).  This was useful in
 finding early limitations (e.g. thread-per-client model @ 10k clients), but
@@ -288,6 +290,8 @@ stated.  Empirical tests suggest that the check is done when metadata is
 updated, and so can be controlled by the "metadata.max.age.ms" ([docs](http://kafka.apache.org/documentation.html#newconsumerconfigs)).
 1. The first publish to a new, auto-created Kafka topic will almost certainly
 block and fail.
+1. Kafka is easier to debug/trace once you correctly configure log4j :).  (
+Otherwise, it can be a silently broken black box.)
 
 ---
 
