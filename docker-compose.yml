@@ -1,0 +1,62 @@
+kafka1:
+  image: "cantireinnovations/kafka:0.9.0.0"
+  ports:
+    - "9092:9092"
+  links:
+    - "zookeeper:zookeeper"
+  environment:
+    DEV: "true"
+    KAFKA_ADVERTISED_HOST_NAME: "${DEV_DOCKER_HOST_NAME}"
+    KAFKA_ADVERTISED_PORT: "9092"
+    KAFKA_BROKER_ID: "1"
+    KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+  restart: "always"
+
+kafka2:
+  image: "cantireinnovations/kafka:0.9.0.0"
+  ports:
+    - "9093:9092"
+  links:
+    - "zookeeper:zookeeper"
+  environment:
+    DEV: "true"
+    KAFKA_ADVERTISED_HOST_NAME: "${DEV_DOCKER_HOST_NAME}"
+    KAFKA_ADVERTISED_PORT: "9093"
+    KAFKA_BROKER_ID: "2"
+    KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+  restart: "always"
+
+kafka3:
+  image: "cantireinnovations/kafka:0.9.0.0"
+  ports:
+    - "9094:9092"
+  links:
+    - "zookeeper:zookeeper"
+  environment:
+    DEV: "true"
+    KAFKA_ADVERTISED_HOST_NAME: "${DEV_DOCKER_HOST_NAME}"
+    KAFKA_ADVERTISED_PORT: "9094"
+    KAFKA_BROKER_ID: "3"
+    KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+  restart: "always"
+
+zookeeper:
+  image: "cantireinnovations/zookeeper:3.4.6"
+  ports:
+    - "2181:2181"
+  expose:
+    - "2181"
+  restart: "always"
+
+kafkette:
+  build: .
+  ports:
+    - "1883:1883"
+  links:
+    - kafka1
+    - kafka2
+    - kafka3
+    - zookeeper
+  environment:
+    KAFKA_SERVERS: "${DEV_DOCKER_HOST_NAME}:9092,${DEV_DOCKER_HOST_NAME}:9092,${DEV_DOCKER_HOST_NAME}:9092"
+  restart: "always"
