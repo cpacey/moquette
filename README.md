@@ -62,12 +62,12 @@ Given the above realizations, and in the interest of quick experimentation, we
 removed most features from the new Kafka-based ProtocolProcessor, including:
 
 1. Security/auth
-1. Qos 1 & 2 (session storage, message storage, queueing, etc)
+1. Qos 1 & 2 (session storage, message storage, queuing, etc)
 1. Will Topics
 1. Retained messages (while we will need these, removing them helped us get moving,
     and our time-box elapsed before we got back to it)
 
-It's also worth noting that I did not modigy the existing test suite, which of
+It's also worth noting that I did not modify the existing test suite, which of
 course fails miserably now.  I did not create or maintain my own tests due to
 the experimental nature of this exercise - the investment in tests did not seem
 like a good investment given the timeframe and focus on scale/performance (which
@@ -119,7 +119,7 @@ due to topic auto-creation.  In this case, KafkaProducer.send is delayed getting
 the metadata for the topic, since the Kafka nodes need to create the topic
 partitions and do leader elections.  This is unfortunate since topic dynamic
 topic creation is a very common use-case in MQTT.  As an example, the benchmarks
-we took (see below) would cause havok if the topics were not first created in
+we took (see below) would cause havoc if the topics were not first created in
 Kafka.
 
 ### Consuming
@@ -276,6 +276,18 @@ cn: 51 , s: 55 , r: 52 , l(a): 167.44230769230768 , ?: 0
 * `r` - Total number of sent messages that have been received
 * `l(a)` - Average message latency (i.e. time between when the message is sent and received)
 * `?` - Ignore this (was for debugging)
+
+## Lessons Learned
+
+These are things we learned during this process that we don't want to forget.
+
+1. On using Kafka wildcards, e.g. for '+/#': [KafkaConsumer.subscribe(java.util.regex.Pattern,...)](https://kafka.apache.org/090/javadoc/index.html?org/apache/kafka/clients/consumer/KafkaConsumer.html)) states
+that "The pattern matching will be done periodically against topics existing
+at the time of check", but the frequency of "periodically" is not clearly
+stated.  Empirical tests suggest that the check is done when metadata is
+updated, and so can be controlled by the "metadata.max.age.ms" ([docs](http://kafka.apache.org/documentation.html#newconsumerconfigs)).
+1. The first publish to a new, auto-created Kafka topic will almost certainly
+block and fail.
 
 ---
 
